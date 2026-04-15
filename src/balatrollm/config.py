@@ -16,7 +16,6 @@ STRATEGIES_DIR = Path(__file__).parent / "strategies"
 ################################################################################
 
 DEFAULT_MODEL_CONFIG: dict[str, bool | int | str | dict] = {
-    "seed": 1,
     "parallel_tool_calls": False,
     "tool_choice": "auto",
     "extra_headers": {
