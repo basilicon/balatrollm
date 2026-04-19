@@ -58,8 +58,12 @@ model:
   - openai/gpt-oss-120b
 
 # Optional OpenAI client parameters passed to chat completions.
-# Common options: seed, temperature, max_tokens, parallel_tool_calls
+# Common options: temperature, max_tokens, parallel_tool_calls
 # The `extra_body` field passes provider-specific parameters (e.g., OpenRouter).
+#
+# NOTE: You can add `seed` for mostly-deterministic outputs with providers that
+# support it (e.g. OpenAI), but note that some providers (e.g. Google) reject the
+# `seed` parameter with a 400 error. Use it only if you know your provider supports it.
 model_config:
   extra_body:
     usage:
