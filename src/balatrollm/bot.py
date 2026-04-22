@@ -19,6 +19,7 @@ from .collector import (
     Stats,
 )
 from .config import Config, Task, get_model_config
+from .deterministic_player import DeterministicPlayer
 from .llm import LLMClient, LLMClientError, LLMTimeoutError
 from .strategy import StrategyManager
 
@@ -54,6 +55,10 @@ class Bot:
         # Separate counters for error calls vs failed calls
         self._consecutive_errors: int = 0
         self._consecutive_faileds: int = 0
+        
+        # Deterministic player state
+        self._deterministic_player = DeterministicPlayer()
+        self._current_game_plan: dict[str, Any] | None = None
 
     async def __aenter__(self) -> "Bot":
         """Initialize all clients."""
@@ -198,12 +203,73 @@ class Bot:
             await self._balatro.call("gamestate")
 
             match current_state:
-                case "SELECTING_HAND" | "SHOP" | "SMODS_BOOSTER_OPENED":
+                case "SELECTING_HAND":
+                    if self.config.strategy != "original":
+                        if not self._current_game_plan:
+                            logger.info("No game plan found for round. Asking LLM for game plan...")
+                            plan_gamestate = gamestate.copy()
+                            plan_gamestate["state"] = "GAME_PLANNING"
+                            response = await self._get_llm_response(plan_gamestate)
+                            llm_payouts = self._parse_game_plan(response)
+                            if llm_payouts:
+                                logger.info(f"LLM provided Payouts: {llm_payouts['target_hands']}")
+                                logger.info("Running Genetic Algorithm Strategy Optimizer...")
+                                optimized_plan = self._deterministic_player.optimize_strategy(gamestate, llm_payouts["target_hands"])
+                                self._current_game_plan = optimized_plan
+                                self._collector.record_call("successful")
+                            else:
+                                logger.warning("LLM failed to provide payouts. Using fallback.")
+                                fallback_payouts = {
+                                    "Straight Flush": 5000, "Four of a Kind": 3000, "Full House": 1500, 
+                                    "Flush": 1200, "Straight": 1000, "Three of a Kind": 500, 
+                                    "Two Pair": 300, "Pair": 100, "High Card": 50
+                                }
+                                logger.info("Running Genetic Algorithm Strategy Optimizer with Fallback Payouts...")
+                                optimized_plan = self._deterministic_player.optimize_strategy(gamestate, fallback_payouts)
+                                self._current_game_plan = optimized_plan
+                                self._collector.record_call("failed")
+                            self._deterministic_player.reset_round()
+                            logger.info(f"Optimized Game plan set: {self._current_game_plan}")
+
+                        action = self._deterministic_player.decide(gamestate, self._current_game_plan)
+                        logger.info(f"Deterministic action: {action['method']} {action['params']}")
+                        gamestate = await self._balatro.call(action["method"], action["params"])
+                        self._collector.write_gamestate(gamestate)
+                        self._history.append({"method": action["method"], "params": action["params"]})
+                        continue
+                        
+                    # If strategy == "original", fall through to the LLM response handler
+                    response = await self._get_llm_response(gamestate)
+                    gamestate = await self._execute_tool_call(response)
+                    
+                case "SHOP" | "SMODS_BOOSTER_OPENED":
+                    if current_state == "SHOP":
+                        money = gamestate.get("money", 0)
+                        min_cost = gamestate.get("round", {}).get("reroll_cost", 5)
+                        
+                        for list_key in ["shop", "vouchers", "packs"]:
+                            for item in gamestate.get(list_key, {}).get("cards", []):
+                                if isinstance(item, dict):
+                                    state = item.get("state", {})
+                                    is_hidden = isinstance(state, dict) and state.get("hidden", False)
+                                    if not is_hidden:
+                                        cost = item.get("cost", {})
+                                        buy_cost = cost.get("buy", 999) if isinstance(cost, dict) else 999
+                                        min_cost = min(min_cost, buy_cost)
+                        
+                        if money < min_cost:
+                            logger.info(f"Not enough money (${money} < min cost ${min_cost}). Auto-skipping shop.")
+                            gamestate = await self._balatro.call("next_round", {})
+                            self._collector.write_gamestate(gamestate)
+                            self._history.append({"method": "next_round", "params": {}})
+                            continue
+
                     response = await self._get_llm_response(gamestate)
                     gamestate = await self._execute_tool_call(response)
                 case "ROUND_EVAL":
                     gamestate = await self._balatro.call("cash_out")
                 case "BLIND_SELECT":
+                    self._current_game_plan = None
                     # NOTE: This bot always selects and never skips blinds
                     gamestate = await self._balatro.call("select")
                 case "GAME_OVER":
@@ -251,6 +317,10 @@ class Bot:
             "tools": tools,
             **self.model_config,
         }
+
+        # Force the model to use set_game_plan during GAME_PLANNING
+        if gamestate["state"] == "GAME_PLANNING" and tools:
+            request_data["tool_choice"] = {"type": "function", "function": {"name": "set_game_plan"}}
 
         custom_id = self._collector.write_request(request_data)
         request_id = str(time.time_ns() // 1_000_000)
@@ -406,3 +476,46 @@ class Bot:
             raise BotError("Too many consecutive failed calls")
 
         return await self._balatro.call("gamestate")
+
+    def _parse_game_plan(self, response: ChatCompletion) -> dict[str, Any] | None:
+        """Parse game plan tool call from LLM response."""
+        try:
+            message = response.choices[0].message
+            
+            # Check for valid tool call
+            if hasattr(message, "tool_calls") and message.tool_calls:
+                tool_call = message.tool_calls[0]
+                function_obj = getattr(tool_call, "function", tool_call)
+                
+                if getattr(function_obj, "name", None) == "set_game_plan":
+                    args_str = getattr(function_obj, "arguments", "")
+                    args = json.loads(args_str)
+                    return {
+                        "target_hands": args.get("target_hands", {}),
+                        "discard_aggressiveness": args.get("discard_aggressiveness", 0.5)
+                    }
+            
+            # Fallback: Try to parse JSON from content
+            content = message.content or getattr(message, "reasoning_content", "")
+            if content:
+                import re
+                json_match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+                if json_match:
+                    args = json.loads(json_match.group(1))
+                    return {
+                        "target_hands": args.get("target_hands", {}),
+                        "discard_aggressiveness": args.get("discard_aggressiveness", 0.5)
+                    }
+                
+                json_match = re.search(r"\{[\s\S]*\"target_hands\"[\s\S]*\}", content)
+                if json_match:
+                    args = json.loads(json_match.group(0))
+                    return {
+                        "target_hands": args.get("target_hands", {}),
+                        "discard_aggressiveness": args.get("discard_aggressiveness", 0.5)
+                    }
+            
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to parse game plan: {e}")
+            return None

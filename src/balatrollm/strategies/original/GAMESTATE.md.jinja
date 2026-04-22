@@ -294,7 +294,6 @@ You **MUST** use one of the following tools to perform the intended action:
     - `voucher`: (integer) 0-based index of voucher to buy
     - `pack`: (integer) 0-based index of booster pack to buy and open
     - `reasoning`: (string) Strategic reasoning for this purchase
-  - **WARNING**: If your Joker slots are full, you CANNOT buy a new Joker. You MUST use the `sell` tool first to make room before attempting to buy.
 - Reroll the shop items
   - Function: `reroll`
   - Parameters:
@@ -330,7 +329,7 @@ You **MUST** use one of the following tools to perform the intended action:
 - Set the game plan for this round
   - Function: `set_game_plan`
   - Parameters:
-    - `target_hands`: (object) Estimated total score (chips * mult, including all active Joker bonuses) if you played this hand type.
+    - `target_hands`: (object) Weights for each hand type (0.0 to 1.0).
     - `discard_aggressiveness`: (number) How aggressively to discard (0.0 to 1.0).
     - `reasoning`: (string) Strategic reasoning.
   

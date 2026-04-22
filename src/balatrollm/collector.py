@@ -49,7 +49,7 @@ def _generate_run_dir(task: Task, base_dir: Path) -> Path:
         / f"v{__version__}"
         / task.strategy
         / vendor
-        / model
+        / model.replace(":", "-")
         / dir_name
     )
 

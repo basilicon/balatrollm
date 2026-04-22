@@ -139,7 +139,7 @@
       "function": {
         "name": "buy",
         "strict": false,
-        "description": "Buy a card, voucher, or pack from the shop. Provide exactly one of: card, voucher, or pack. WARNING: If your Joker slots are full, you CANNOT buy a new Joker. You MUST use the sell tool first to make room before attempting to buy.",
+        "description": "Buy a card, voucher, or pack from the shop. Provide exactly one of: card, voucher, or pack.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -359,24 +359,24 @@
       "function": {
         "name": "set_game_plan",
         "strict": false,
-        "description": "Set the game plan for the upcoming round. Estimate the final score (including all active Joker bonuses) for each hand type.",
+        "description": "Set the game plan for the upcoming round. Assign weights to target hands and a discard aggressiveness score.",
         "parameters": {
           "type": "object",
           "properties": {
             "target_hands": {
               "type": "object",
               "properties": {
-                "High Card": { "type": "integer", "minimum": 0 },
-                "Pair": { "type": "integer", "minimum": 0 },
-                "Two Pair": { "type": "integer", "minimum": 0 },
-                "Three of a Kind": { "type": "integer", "minimum": 0 },
-                "Straight": { "type": "integer", "minimum": 0 },
-                "Flush": { "type": "integer", "minimum": 0 },
-                "Full House": { "type": "integer", "minimum": 0 },
-                "Four of a Kind": { "type": "integer", "minimum": 0 },
-                "Straight Flush": { "type": "integer", "minimum": 0 }
+                "High Card": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Pair": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Two Pair": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Three of a Kind": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Straight": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Flush": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Full House": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Four of a Kind": { "type": "number", "minimum": 0, "maximum": 1 },
+                "Straight Flush": { "type": "number", "minimum": 0, "maximum": 1 }
               },
-              "description": "Estimated final score (Chips * Mult, including Joker bonuses) if you played this hand type."
+              "description": "Weights for each hand type (0.0 to 1.0). Higher means we want to aggressively dig for it."
             },
             "discard_aggressiveness": {
               "type": "number",

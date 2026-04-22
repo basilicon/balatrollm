@@ -99,6 +99,12 @@ def _resolve_config_path(args_config: Path | None) -> Path | None:
 
 def main() -> None:
     """Main entry point for balatrollm command."""
+    # Force UTF-8 encoding for standard streams to prevent crashes when logging unicode characters like card suits
+    if sys.stdout.encoding.lower() != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8")
+    if sys.stderr.encoding.lower() != "utf-8":
+        sys.stderr.reconfigure(encoding="utf-8")
+        
     parser = create_parser()
     args = parser.parse_args()
 

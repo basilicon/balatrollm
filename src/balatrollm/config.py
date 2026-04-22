@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any, Self
 
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 STRATEGIES_DIR = Path(__file__).parent / "strategies"
 
