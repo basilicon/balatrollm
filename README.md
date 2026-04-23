@@ -16,6 +16,13 @@
 
 BalatroLLM is a bot that uses Large Language Models (LLMs) to play [Balatro](https://www.playbalatro.com/), the popular roguelike poker deck-building game. The bot analyzes game states, makes strategic decisions, and executes actions through the [BalatroBot](https://github.com/coder/balatrobot) API.
 
+## ✨ Custom Enhancements
+
+This repository features several major improvements over the original framework:
+
+- **Genetic Algorithm Optimization (`deterministic_player.py`)**: The deterministic player now incorporates a powerful `optimize_strategy` feature. It uses a Genetic Algorithm to rapidly simulate thousands of possible game actions, dynamically finding the most mathematically optimal target hand weights and discard aggressiveness.
+- **Enhanced Default Strategy (`strategies/default`)**: We've introduced a highly modular and robust prompt strategy system utilizing Jinja templating (`GAMESTATE.md.jinja`, `MEMORY.md.jinja`, `STRATEGY.md.jinja`). This structure gives the LLM clearer context about the current game state, available actions, and memory, driving vastly superior decision-making.
+
 ## 📚 Documentation
 
 https://coder.github.io/balatrollm/
