@@ -386,11 +386,13 @@ class Collector:
             gamestates = [json.loads(line) for line in f]
         assert len(gamestates) >= 1, "Expected at least one gamestate"
         responses_path = self.run_dir / "responses.jsonl"
-        with responses_path.open() as f:
-            responses = [
-                ChatCompletionRequestOutput.from_dict(json.loads(line)) for line in f
-            ]
-        assert len(responses) >= 2, "Expected at least two responses"
+        if responses_path.exists():
+            with responses_path.open() as f:
+                responses = [
+                    ChatCompletionRequestOutput.from_dict(json.loads(line)) for line in f
+                ]
+        else:
+            responses = []
 
         ################################################################################
         # Populate lists for each stat type and count providers
@@ -438,16 +440,16 @@ class Collector:
             # Token statistics
             tokens_in_total=sum(input_tokens),
             tokens_out_total=sum(output_tokens),
-            tokens_in_avg=sum(input_tokens) / n,
-            tokens_out_avg=sum(output_tokens) / n,
-            tokens_in_std=statistics.stdev(input_tokens),
-            tokens_out_std=statistics.stdev(output_tokens),
+            tokens_in_avg=sum(input_tokens) / n if n > 0 else 0,
+            tokens_out_avg=sum(output_tokens) / n if n > 0 else 0,
+            tokens_in_std=statistics.stdev(input_tokens) if n > 1 else 0,
+            tokens_out_std=statistics.stdev(output_tokens) if n > 1 else 0,
             # Timing statistics
             time_total_ms=sum(time_ms_list),
-            time_avg_ms=sum(time_ms_list) / n,
-            time_std_ms=statistics.stdev(time_ms_list),
+            time_avg_ms=sum(time_ms_list) / n if n > 0 else 0,
+            time_std_ms=statistics.stdev(time_ms_list) if n > 1 else 0,
             # Cost statistics
             cost_total=sum(total_costs),
-            cost_avg=sum(total_costs) / n,
-            cost_std=statistics.stdev(total_costs),
+            cost_avg=sum(total_costs) / n if n > 0 else 0,
+            cost_std=statistics.stdev(total_costs) if n > 1 else 0,
         )

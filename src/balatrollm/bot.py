@@ -200,38 +200,38 @@ class Bot:
             logger.info(f"State: {current_state}")
 
             await asyncio.sleep(0.5)
-            await self._balatro.call("gamestate")
+            gamestate = await self._balatro.call("gamestate")
 
             match current_state:
                 case "SELECTING_HAND":
                     if self.config.strategy != "original":
-                        if not self._current_game_plan:
-                            logger.info("No game plan found for round. Asking LLM for game plan...")
+                        # We use _current_game_plan attribute to store the evaluator for the duration of the round
+                        if not getattr(self, "_current_evaluator", None):
+                            logger.info("No evaluator found for round. Asking LLM to provide one...")
                             plan_gamestate = gamestate.copy()
                             plan_gamestate["state"] = "GAME_PLANNING"
                             response = await self._get_llm_response(plan_gamestate)
-                            llm_payouts = self._parse_game_plan(response)
-                            if llm_payouts:
-                                logger.info(f"LLM provided Payouts: {llm_payouts['target_hands']}")
-                                logger.info("Running Genetic Algorithm Strategy Optimizer...")
-                                optimized_plan = self._deterministic_player.optimize_strategy(gamestate, llm_payouts["target_hands"])
-                                self._current_game_plan = optimized_plan
+                            llm_evaluator = self._parse_evaluator(response)
+                            if llm_evaluator:
+                                logger.info("LLM provided Python evaluator function successfully.")
+                                self._current_evaluator = llm_evaluator
                                 self._collector.record_call("successful")
                             else:
-                                logger.warning("LLM failed to provide payouts. Using fallback.")
-                                fallback_payouts = {
-                                    "Straight Flush": 5000, "Four of a Kind": 3000, "Full House": 1500, 
-                                    "Flush": 1200, "Straight": 1000, "Three of a Kind": 500, 
-                                    "Two Pair": 300, "Pair": 100, "High Card": 50
-                                }
-                                logger.info("Running Genetic Algorithm Strategy Optimizer with Fallback Payouts...")
-                                optimized_plan = self._deterministic_player.optimize_strategy(gamestate, fallback_payouts)
-                                self._current_game_plan = optimized_plan
+                                logger.warning("LLM failed to provide valid evaluator. Using default evaluator.")
+                                def default_evaluator(cards, hand_type, hands_info):
+                                    chips = hands_info[hand_type].get('chips', 0)
+                                    mult = hands_info[hand_type].get('mult', 1)
+                                    for c in cards:
+                                        if not c.get('debuff'):
+                                            chips += c.get('chip_value', 0)
+                                    return chips * mult
+                                    
+                                self._current_evaluator = default_evaluator
                                 self._collector.record_call("failed")
                             self._deterministic_player.reset_round()
-                            logger.info(f"Optimized Game plan set: {self._current_game_plan}")
+                            logger.info("Evaluator set for MCTS Engine.")
 
-                        action = self._deterministic_player.decide(gamestate, self._current_game_plan)
+                        action = self._deterministic_player.decide(gamestate, self._current_evaluator)
                         logger.info(f"Deterministic action: {action['method']} {action['params']}")
                         gamestate = await self._balatro.call(action["method"], action["params"])
                         self._collector.write_gamestate(gamestate)
@@ -269,7 +269,7 @@ class Bot:
                 case "ROUND_EVAL":
                     gamestate = await self._balatro.call("cash_out")
                 case "BLIND_SELECT":
-                    self._current_game_plan = None
+                    self._current_evaluator = None
                     # NOTE: This bot always selects and never skips blinds
                     gamestate = await self._balatro.call("select")
                 case "GAME_OVER":
@@ -477,45 +477,42 @@ class Bot:
 
         return await self._balatro.call("gamestate")
 
-    def _parse_game_plan(self, response: ChatCompletion) -> dict[str, Any] | None:
-        """Parse game plan tool call from LLM response."""
+    def _parse_evaluator(self, response: ChatCompletion) -> Any | None:
+        """Parse provide_evaluator tool call from LLM response and compile the function."""
         try:
             message = response.choices[0].message
             
             # Check for valid tool call
+            code_str = None
             if hasattr(message, "tool_calls") and message.tool_calls:
                 tool_call = message.tool_calls[0]
                 function_obj = getattr(tool_call, "function", tool_call)
                 
-                if getattr(function_obj, "name", None) == "set_game_plan":
+                if getattr(function_obj, "name", None) == "provide_evaluator":
                     args_str = getattr(function_obj, "arguments", "")
                     args = json.loads(args_str)
-                    return {
-                        "target_hands": args.get("target_hands", {}),
-                        "discard_aggressiveness": args.get("discard_aggressiveness", 0.5)
-                    }
+                    code_str = args.get("code")
             
-            # Fallback: Try to parse JSON from content
-            content = message.content or getattr(message, "reasoning_content", "")
-            if content:
-                import re
-                json_match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
-                if json_match:
-                    args = json.loads(json_match.group(1))
-                    return {
-                        "target_hands": args.get("target_hands", {}),
-                        "discard_aggressiveness": args.get("discard_aggressiveness", 0.5)
-                    }
+            # Fallback: Try to parse markdown code blocks from content
+            if not code_str:
+                content = message.content or getattr(message, "reasoning_content", "")
+                if "```python" in content:
+                    parts = content.split("```python")
+                    if len(parts) > 1:
+                        code_str = parts[1].split("```")[0].strip()
+                        
+            if code_str:
+                # Compile and extract the function
+                namespace = {}
+                exec(compile(code_str, "<string>", "exec"), namespace)
                 
-                json_match = re.search(r"\{[\s\S]*\"target_hands\"[\s\S]*\}", content)
-                if json_match:
-                    args = json.loads(json_match.group(0))
-                    return {
-                        "target_hands": args.get("target_hands", {}),
-                        "discard_aggressiveness": args.get("discard_aggressiveness", 0.5)
-                    }
-            
-            return None
+                if "evaluate_hand" in namespace and callable(namespace["evaluate_hand"]):
+                    return namespace["evaluate_hand"]
+                else:
+                    logger.error("evaluate_hand function not found in LLM code.")
+                    return None
+                    
         except Exception as e:
-            logger.warning(f"Failed to parse game plan: {e}")
-            return None
+            logger.error(f"Failed to parse evaluator: {e}")
+            
+        return None

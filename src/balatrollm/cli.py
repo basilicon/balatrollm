@@ -80,6 +80,8 @@ async def execute(config: Config, tasks: list[Task]) -> int:
         print("\nInterrupted by user")
         return 130
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Execution failed: {e}")
         return 1
     finally:

@@ -1,109 +1,3 @@
-"""Deterministic player for in-game Balatro actions."""
-
-import itertools
-import random
-import time
-import math
-from collections import Counter
-from typing import Any, List, Tuple
-import logging
-
-logger = logging.getLogger(__name__)
-
-RANKS = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'T': 10,
-         'J': 11, 'Q': 12, 'K': 13, 'A': 14}
-
-def parse_card(card: dict) -> dict:
-    """Parse a card from gamestate into a rich dictionary for LLM evaluation."""
-    modifier = card.get('modifier', {})
-    if not isinstance(modifier, dict):
-        modifier = {}
-        
-    state_val = card.get('state', {})
-    if not isinstance(state_val, dict):
-        state_val = {}
-    
-    enhancement = modifier.get('enhancement')
-    edition = modifier.get('edition')
-    seal = modifier.get('seal')
-    debuff = state_val.get('debuff', False)
-    
-    # Some cards might be stone cards without rank/suit
-    if enhancement == 'STONE':
-        return {
-            'rank': 'None', 'suit': 'None', 'rank_val': 0, 'chip_value': 50,
-            'enhancement': enhancement, 'edition': edition, 'seal': seal, 'debuff': debuff
-        }
-        
-    value = card.get('value', {})
-    if isinstance(value, dict):
-        rank_str = value.get('rank', '2')
-        suit = value.get('suit', 'Spades')
-    else:
-        rank_str = '2'
-        suit = 'Spades'
-        
-    chip_value = 0
-    if rank_str in ['T', 'J', 'Q', 'K']:
-        chip_value = 10
-    elif rank_str == 'A':
-        chip_value = 11
-    elif rank_str.isdigit():
-        chip_value = int(rank_str)
-        
-    return {
-        'rank': rank_str, 'suit': suit, 'rank_val': RANKS.get(rank_str, 0), 'chip_value': chip_value,
-        'enhancement': enhancement, 'edition': edition, 'seal': seal, 'debuff': debuff
-    }
-
-def get_hand_type(cards: List[dict]) -> str:
-    """Return the highest poker hand type for a list of up to 5 cards."""
-    if not cards:
-        return "High Card"
-        
-    ranks = [c['rank_val'] for c in cards if c['rank_val'] > 0]
-    suits = [c['suit'] for c in cards if c['suit'] != 'None']
-    
-    rank_counts = Counter(ranks)
-    counts = sorted(rank_counts.values(), reverse=True)
-    
-    is_flush = len(suits) == 5 and len(set(suits)) == 1
-    
-    is_straight = False
-    if len(ranks) == 5 and len(set(ranks)) == 5:
-        sorted_ranks = sorted(ranks)
-        if sorted_ranks[-1] - sorted_ranks[0] == 4:
-            is_straight = True
-        # A-2-3-4-5 straight
-        elif sorted_ranks == [2, 3, 4, 5, 14]:
-            is_straight = True
-
-    if is_flush and counts == [5]:
-        return "Flush Five"
-    if counts == [5]:
-        return "Five of a Kind"
-    if is_flush and is_straight:
-        return "Straight Flush"
-    if is_flush and counts == [3, 2]:
-        return "Flush House"
-    if counts == [4, 1] or counts == [4]:
-        return "Four of a Kind"
-    if counts == [3, 2]:
-        return "Full House"
-    if is_flush:
-        return "Flush"
-    if is_straight:
-        return "Straight"
-    if counts and counts[0] == 3:
-        return "Three of a Kind"
-    if counts and counts[0] == 2 and len(counts) > 1 and counts[1] == 2:
-        return "Two Pair"
-    if counts and counts[0] == 2:
-        return "Pair"
-        
-    return "High Card"
-
-
 class MCTSNode:
     def __init__(self, state, parent=None, action=None):
         # state: (hand, deck, score, hands_left, discards_left)
@@ -129,7 +23,7 @@ class MCTSNode:
                     combo = [hand[i] for i in indices]
                     htype = get_hand_type(combo)
                     s = evaluator(combo, htype, hands_info)
-                    logger.info(f"MCTS Get untried actions score: {s}, Combo: {combo}")
+                    print("Score: ", s, " Combo: ", combo)
                     play_combos.append((s, list(indices)))
             
             # Keep top 15 highest scoring plays to prune search space
@@ -183,7 +77,7 @@ def apply_action(state, action, evaluator, hands_info):
         combo = [hand[i] for i in indices]
         htype = get_hand_type(combo)
         new_score += evaluator(combo, htype, hands_info)
-        logger.info(f"New Score: {new_score}, Combo: {combo}")
+        print("Score: ", new_score, " Combo: ", combo)
         new_hands_left -= 1
     elif action_type == "discard":
         new_discards_left -= 1
@@ -204,7 +98,7 @@ def rollout(state, evaluator, hands_info, blind_target):
                 combo = [hand[i] for i in indices]
                 htype = get_hand_type(combo)
                 s = evaluator(combo, htype, hands_info)
-                logger.info(f"Rollout Score: {s}, Combo: {combo}")
+                print("Score: ", s, " Combo: ", combo)
                 if s > best_score:
                     best_score = s
                     best_indices = list(indices)
@@ -232,9 +126,8 @@ def rollout(state, evaluator, hands_info, blind_target):
     return 1.0 if score >= blind_target else 0.0
 
 def mcts_search(root_state, evaluator, hands_info, blind_target, time_limit=1.5):
-    logger.info(f"MCTS search started for {time_limit} seconds.")
-    logger.info(f"root_state: {root_state}")
-    logger.info(f"hands_info: {hands_info}")
+    import logging
+    logger = logging.getLogger(__name__)
 
     root_node = MCTSNode(root_state)
     start_time = time.time()

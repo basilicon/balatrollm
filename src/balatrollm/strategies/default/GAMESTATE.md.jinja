@@ -327,14 +327,45 @@ You **MUST** use one of the following tools to perform the intended action:
     - `skip`: (boolean, optional) Set to true to skip the pack without selecting a card
     - `reasoning`: (string) Strategic reasoning for this selection or skip
 {% elif G.state == "GAME_PLANNING" -%}
-- Set the game plan for this round
-  - Function: `set_game_plan`
+- Provide a Python evaluation function
+  - Function: `provide_evaluator`
   - Parameters:
-    - `target_hands`: (object) Estimated total score (chips * mult, including all active Joker bonuses) if you played this hand type.
-    - `discard_aggressiveness`: (number) How aggressively to discard (0.0 to 1.0).
+    - `code`: (string) A raw Python function `def evaluate_hand(cards, hand_type, hands_info):`
     - `reasoning`: (string) Strategic reasoning.
   
-  **CRITICAL INSTRUCTION**: You must invoke the `set_game_plan` tool call in your response. Do not simply list the plan in plain text.
+  **CRITICAL INSTRUCTION**: Instead of estimating scores yourself, you must write a highly accurate Python function to evaluate a 5-card hand based on your active Jokers. Our MCTS engine will run this function millions of times to find the absolute best discard strategy.
+  
+  **Function Signature:**
+  ```python
+  def evaluate_hand(cards, hand_type, hands_info):
+      '''
+      cards: List of dicts. Example: [{'rank': '10', 'suit': 'Spades', 'chip_value': 10, 'enhancement': None, 'edition': None, 'seal': None, 'debuff': False}, ...]
+      hand_type: String. e.g. "Flush", "Two Pair", "High Card"
+      hands_info: Dict. Example: {'Flush': {'chips': 35, 'mult': 4}}
+      '''
+      # 1. Base score
+      chips = hands_info[hand_type]['chips']
+      mult = hands_info[hand_type]['mult']
+      
+      # 2. Add card chips
+      for c in cards:
+          if not c.get('debuff'):
+              chips += c['chip_value']
+              
+      # 3. Apply Joker effects (WRITE THIS LOGIC!)
+      # Example: Half Joker (+20 Mult if hand size <= 3)
+      if len(cards) <= 3:
+          mult += 20
+          
+      # Example: Even Steven (+4 Mult for even cards)
+      for c in cards:
+          if c['rank'] in ['2', '4', '6', '8', '10']:
+              mult += 4
+              
+      # 4. Return total score
+      return chips * mult
+  ```
+  **CRITICAL**: You must invoke the `provide_evaluator` tool call in your response. Do not simply list the code in plain text.
 {% endif -%}
 {% if G.state in ["SELECTING_HAND", "SHOP"] -%}
 - Sell a joker or consumable for money

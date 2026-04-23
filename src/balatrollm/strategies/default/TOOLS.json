@@ -357,39 +357,22 @@
     {
       "type": "function",
       "function": {
-        "name": "set_game_plan",
+        "name": "provide_evaluator",
         "strict": false,
-        "description": "Set the game plan for the upcoming round. Estimate the final score (including all active Joker bonuses) for each hand type.",
+        "description": "Provide a Python function to evaluate the exact score of a hand, given the current active Jokers.",
         "parameters": {
           "type": "object",
           "properties": {
-            "target_hands": {
-              "type": "object",
-              "properties": {
-                "High Card": { "type": "integer", "minimum": 0 },
-                "Pair": { "type": "integer", "minimum": 0 },
-                "Two Pair": { "type": "integer", "minimum": 0 },
-                "Three of a Kind": { "type": "integer", "minimum": 0 },
-                "Straight": { "type": "integer", "minimum": 0 },
-                "Flush": { "type": "integer", "minimum": 0 },
-                "Full House": { "type": "integer", "minimum": 0 },
-                "Four of a Kind": { "type": "integer", "minimum": 0 },
-                "Straight Flush": { "type": "integer", "minimum": 0 }
-              },
-              "description": "Estimated final score (Chips * Mult, including Joker bonuses) if you played this hand type."
-            },
-            "discard_aggressiveness": {
-              "type": "number",
-              "minimum": 0.0,
-              "maximum": 1.0,
-              "description": "How aggressively we should discard vs playing a sub-optimal hand. 1.0 = discard until no discards left if we don't have our best hand."
+            "code": {
+              "type": "string",
+              "description": "A raw string containing the Python function `def evaluate_hand(cards, hand_type, hands_info):`. It must return an integer representing the final score (chips * mult)."
             },
             "reasoning": {
               "type": "string",
-              "description": "Strategic reasoning for this game plan."
+              "description": "Strategic reasoning explaining the Joker logic implemented in the code."
             }
           },
-          "required": ["target_hands", "discard_aggressiveness", "reasoning"]
+          "required": ["code", "reasoning"]
         }
       }
     }

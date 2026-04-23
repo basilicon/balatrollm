@@ -11,6 +11,10 @@ dependencies = [
   "pyyaml>=6.0.3",
   "httpx>=0.28.1",
   "balatrobot>=1.4.1",
+  "gymnasium>=1.2.3",
+  "stable-baselines3>=2.8.0",
+  "sb3-contrib>=2.8.0",
+  "torch>=2.11.0",
 ]
 classifiers = [
   "License :: OSI Approved :: MIT License",

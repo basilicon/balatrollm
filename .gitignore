@@ -286,3 +286,4 @@ tests/integration/fixtures/**/*.jkr
 # Generated golden files (regenerate with tests/fixtures/generate.py)
 tests/unit/fixtures/**/*.json
 tests/unit/fixtures/**/*.md
+models/balatro_ppo_model.zip

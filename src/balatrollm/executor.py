@@ -95,6 +95,8 @@ class Executor:
                     f"[{count:0{len(str(total))}d}/{total}] COMPLETED | {log_path} | {task}"
                 )
             except Exception:
+                import traceback
+                traceback.print_exc()
                 logger.exception(f"Run failed: {task}")
                 print(
                     f"[{count:0{len(str(total))}d}/{total}] ERROR     | {log_path} | {task}"
