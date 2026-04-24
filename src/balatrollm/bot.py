@@ -22,6 +22,7 @@ from .config import Config, Task, get_model_config
 from .deterministic_player import DeterministicPlayer
 from .llm import LLMClient, LLMClientError, LLMTimeoutError
 from .strategy import StrategyManager
+from .deterministic_player import parse_card, get_hand_type
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,9 @@ class Bot:
             raise
         except Exception as e:
             self._finish_reason = "unexpected_error"
+            import traceback
+            with open("crash.txt", "w") as f:
+                traceback.print_exc(file=f)
             logger.exception("Unexpected error occurred during gameplay")
             raise BotError(f"Unexpected error: {e}") from e
         finally:
@@ -207,32 +211,158 @@ class Bot:
                     if self.config.strategy != "original":
                         # We use _current_game_plan attribute to store the evaluator for the duration of the round
                         if not getattr(self, "_current_evaluator", None):
-                            logger.info("No evaluator found for round. Asking LLM to provide one...")
-                            plan_gamestate = gamestate.copy()
-                            plan_gamestate["state"] = "GAME_PLANNING"
-                            response = await self._get_llm_response(plan_gamestate)
-                            llm_evaluator = self._parse_evaluator(response)
-                            if llm_evaluator:
-                                logger.info("LLM provided Python evaluator function successfully.")
-                                self._current_evaluator = llm_evaluator
-                                self._collector.record_call("successful")
-                            else:
-                                logger.warning("LLM failed to provide valid evaluator. Using default evaluator.")
-                                def default_evaluator(cards, hand_type, hands_info):
-                                    chips = hands_info[hand_type].get('chips', 0)
-                                    mult = hands_info[hand_type].get('mult', 1)
-                                    for c in cards:
-                                        if not c.get('debuff'):
-                                            chips += c.get('chip_value', 0)
-                                    return chips * mult
-                                    
-                                self._current_evaluator = default_evaluator
-                                self._collector.record_call("failed")
-                            self._deterministic_player.reset_round()
-                            logger.info("Evaluator set for MCTS Engine.")
+                            jokers = gamestate.get("jokers", {}).get("cards", [])
+                            has_jokers = any(isinstance(j, dict) for j in jokers)
 
-                        action = self._deterministic_player.decide(gamestate, self._current_evaluator)
-                        logger.info(f"Deterministic action: {action['method']} {action['params']}")
+                            def default_evaluator(cards, hand_type, hands_info):
+                                chips = hands_info[hand_type].get('chips', 0)
+                                mult = hands_info[hand_type].get('mult', 1)
+                                for c in cards:
+                                    if not c.get('debuff'):
+                                        chips += c.get('chip_value', 0)
+                                return chips * mult
+
+                            if not has_jokers:
+                                logger.info("No jokers found. Using default evaluator without LLM call.")
+                                self._current_evaluator = default_evaluator
+                            else:
+                                logger.info("No evaluator found for round. Asking LLM to provide one...")
+                                plan_gamestate = gamestate.copy()
+                                plan_gamestate["state"] = "GAME_PLANNING"
+                                response = await self._get_llm_response(plan_gamestate)
+                                llm_evaluator = self._parse_evaluator(response)
+                                if llm_evaluator:
+                                    logger.info("LLM provided Python evaluator function successfully.")
+                                    self._current_evaluator = llm_evaluator
+                                    self._collector.record_call("successful")
+                                else:
+                                    logger.warning("LLM failed to provide valid evaluator. Using default evaluator.")
+                                    self._current_evaluator = default_evaluator
+                                    self._collector.record_call("failed")
+                            
+                            # Online PPO Training
+                            if not getattr(self, "_rl_model", None):
+                                from sb3_contrib import MaskablePPO
+                                from balatrollm.attention_policy import CustomAttentionExtractor, CustomSharedMLPPolicy
+                                import os
+                                from balatrollm.balatro_sim_env import BalatroSimEnv
+                                from sb3_contrib.common.wrappers import ActionMasker
+                                import gymnasium as gym
+                                
+                                def mask_fn(env: gym.Env):
+                                    return env.unwrapped.action_masks()
+                                    
+                                dummy_env = BalatroSimEnv(gamestate, self._current_evaluator, gamestate.get("hands", {}))
+                                dummy_env = ActionMasker(dummy_env, mask_fn)
+                                
+                                if os.path.exists("models/pretrained_ppo.zip"):
+                                    logger.info("Loading pretrained PPO model...")
+                                    self._rl_model = MaskablePPO.load("models/pretrained_ppo.zip", env=dummy_env, custom_objects={"ent_coef": 0.01})
+                                else:
+                                    logger.info("Initializing PPO model with Shared MLP Graph Architecture...")
+                                    policy_kwargs = dict(
+                                        features_extractor_class=CustomAttentionExtractor,
+                                        features_extractor_kwargs=dict(),
+                                        net_arch=[] # Essential to ensure SharedActionNet directly receives unmixed features
+                                    )
+                                    self._rl_model = MaskablePPO(
+                                        CustomSharedMLPPolicy,
+                                        dummy_env,
+                                        learning_rate=0.0005,
+                                        n_steps=128,
+                                        batch_size=32,
+                                        ent_coef=0.01,
+                                        policy_kwargs=policy_kwargs,
+                                        verbose=0
+                                    )
+                                logger.info("PPO model initialized.")
+                                
+                            # Speculative Round Training
+                            from balatrollm.balatro_sim_env import BalatroSimEnv
+                            from sb3_contrib.common.wrappers import ActionMasker
+                            import gymnasium as gym
+                            
+                            def mask_fn(env: gym.Env):
+                                return env.unwrapped.action_masks()
+                                
+                            sim_env = BalatroSimEnv(gamestate, self._current_evaluator, gamestate.get("hands", {}))
+                            sim_env = ActionMasker(sim_env, mask_fn)
+                            
+                            self._rl_model.set_env(sim_env)
+                            
+                            logger.info("Evaluating current policy...")
+                            total_score = 0
+                            for _ in range(3):
+                                obs, _ = sim_env.reset()
+                                done = False
+                                while not done:
+                                    action_masks = sim_env.unwrapped.action_masks()
+                                    action, _ = self._rl_model.predict(obs, action_masks=action_masks, deterministic=True)
+                                    obs, reward, done, _, _ = sim_env.step(action)
+                                    if reward > 0:
+                                        total_score += (10 ** reward) - 1
+                            avg_score = total_score / 3
+                            
+                            blind_target = 0
+                            for blind in gamestate.get("blinds", {}).values():
+                                if blind.get("status") == "CURRENT":
+                                    blind_target = blind.get("score", 0)
+                                    break
+                                    
+                            if avg_score >= blind_target:
+                                logger.info(f"Model performs well ({avg_score:.1f} >= {blind_target}). Short fine-tuning...")
+                                self._rl_model.learn(total_timesteps=1000)
+                            else:
+                                logger.info(f"Model needs optimization ({avg_score:.1f} < {blind_target}). Long fine-tuning...")
+                                self._rl_model.learn(total_timesteps=10000)
+                            
+                        from balatrollm.balatro_sim_env import BalatroSimEnv
+                        from sb3_contrib.common.wrappers import ActionMasker
+                        import gymnasium as gym
+                        def mask_fn(env: gym.Env):
+                            return env.unwrapped.action_masks()
+                            
+                        sim_env = BalatroSimEnv(gamestate, self._current_evaluator, gamestate.get("hands", {}))
+                        sim_env = ActionMasker(sim_env, mask_fn)
+                        sim_env.reset()
+                        
+                        from balatrollm.observation_space import parse_gamestate_to_obs
+                        from balatrollm.action_space import ACTION_SPACE
+                        
+                        obs = parse_gamestate_to_obs(gamestate)
+                        action_masks = sim_env.unwrapped.action_masks()
+                        
+                        action_array, _ = self._rl_model.predict(obs, action_masks=action_masks, deterministic=True)
+                        
+                        act_type = "play" if action_array[0] == 0 else "discard"
+                        indices = [i for i, val in enumerate(action_array[1:]) if val == 1]
+                        
+                        if len(indices) > 5:
+                            indices = indices[:5]
+                        elif len(indices) == 0:
+                            indices = [0]
+                            
+                        # Balatro API expects 1-based indices
+                        api_indices = [i + 1 for i in indices]
+                        
+                        hand_cards = gamestate.get("hand", {}).get("cards", [])
+                        selected_cards = [hand_cards[i] for i in indices if i < len(hand_cards)]
+                        parsed_selected_cards = [parse_card(c) for c in selected_cards]
+                        htype = get_hand_type(parsed_selected_cards)
+                        try:
+                            hands_info = gamestate.get("hands", {})
+                            expected_score = self._current_evaluator(parsed_selected_cards, htype, hands_info)
+                        except Exception:
+                            expected_score = 0.0
+                            
+                        reasoning = f"Online PPO selected move via Shared MLP. Expected Score: {expected_score} ({htype})"
+                        
+                        action = {
+                            "method": act_type,
+                            "params": {"cards": api_indices, "reasoning": reasoning}
+                        }
+                        
+                        logger.info(f"PPO action: {action['method']} {action['params']}")
                         gamestate = await self._balatro.call(action["method"], action["params"])
                         self._collector.write_gamestate(gamestate)
                         self._history.append({"method": action["method"], "params": action["params"]})

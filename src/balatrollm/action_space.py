@@ -1,7 +1,7 @@
 import itertools
 from typing import List, Tuple
 
-MAX_HAND_SIZE = 12
+MAX_HAND_SIZE = 20
 
 def build_action_space() -> List[Tuple[str, List[int]]]:
     """Builds the mapping from action index to (action_type, card_indices)."""

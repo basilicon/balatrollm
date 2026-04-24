@@ -122,7 +122,7 @@ class LLMClient:
             except json.JSONDecodeError as e:
                 logger.error(f"LLM response parse error (malformed JSON): {e}")
                 last_exception = e
-
+                
             if attempt < self.max_retries - 1:
                 logger.warning(
                     f"Retrying in {retry_delay}s [{attempt + 1}/{self.max_retries}]"

@@ -56,6 +56,52 @@ def parse_card(card: dict) -> dict:
         'enhancement': enhancement, 'edition': edition, 'seal': seal, 'debuff': debuff
     }
 
+def get_scoring_cards(cards: List[dict], hand_type: str) -> List[dict]:
+    if hand_type in ["Flush", "Straight", "Straight Flush", "Full House", "Five of a Kind", "Flush House", "Flush Five"]:
+        return cards
+        
+    ranks = [c['rank_val'] for c in cards if c['rank_val'] > 0]
+    rank_counts = Counter(ranks)
+    
+    scoring_ranks = set()
+    if hand_type == "Four of a Kind":
+        scoring_ranks = {r for r, count in rank_counts.items() if count >= 4}
+    elif hand_type == "Three of a Kind":
+        scoring_ranks = {r for r, count in rank_counts.items() if count >= 3}
+    elif hand_type == "Two Pair" or hand_type == "Pair":
+        scoring_ranks = {r for r, count in rank_counts.items() if count >= 2}
+    elif hand_type == "High Card":
+        if ranks:
+            scoring_ranks = {max(ranks)}
+            
+    scoring = []
+    # High Card: only ONE card of the highest rank scores (even if they play two, it would be a pair, but just in case)
+    high_card_scored = False
+    
+    for c in cards:
+        if c.get('enhancement') == 'STONE':
+            scoring.append(c)
+        elif c['rank_val'] in scoring_ranks:
+            if hand_type == "High Card":
+                if not high_card_scored:
+                    scoring.append(c)
+                    high_card_scored = True
+            else:
+                scoring.append(c)
+                
+    return scoring
+
+def default_evaluator(cards, hand_type, hands_info):
+    if hand_type not in hands_info:
+        return 0
+    chips = hands_info[hand_type]['chips']
+    mult = hands_info[hand_type]['mult']
+    scoring_cards = get_scoring_cards(cards, hand_type)
+    for c in scoring_cards:
+        if not c.get('debuff', False):
+            chips += c.get('chip_value', 0)
+    return chips * mult
+
 def get_hand_type(cards: List[dict]) -> str:
     """Return the highest poker hand type for a list of up to 5 cards."""
     if not cards:
@@ -328,7 +374,11 @@ class DeterministicPlayer:
         hands_left = gamestate.get("round", {}).get("hands_left", 1)
         discards_left = gamestate.get("round", {}).get("discards_left", 0)
         current_score = gamestate.get("round", {}).get("chips", 0)
-        blind_target = gamestate.get("blind", {}).get("chips", float('inf'))
+        blind_target = float('inf')
+        for blind in gamestate.get("blinds", {}).values():
+            if blind.get("status") == "CURRENT":
+                blind_target = blind.get("score", float('inf'))
+                break
         
         deck_cards_raw = gamestate.get("cards", {}).get("cards", [])
         valid_deck_cards = [c for c in deck_cards_raw if isinstance(c, dict)]
@@ -344,10 +394,13 @@ class DeterministicPlayer:
         if len(indices) > 5:
             indices = indices[:5]
             
+        # Balatro API expects 1-based indices
+        api_indices = [i + 1 for i in indices]
+            
         return {
             "method": action_type,
             "params": {
-                "cards": indices,
+                "cards": api_indices,
                 "reasoning": f"MCTS search decided to {action_type} {len(indices)} cards."
             }
         }
